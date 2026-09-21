@@ -1,0 +1,58 @@
+name: Build MateRS NEO EMUI9.1.0 RKSU Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      CROSS_COMPILE: aarch64-linux-android-
+      HOSTCFLAGS: "-fcommon"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 100
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y binutils make python2 libssl-dev flex unzip \
+            xz-utils cpio device-tree-compiler git bc bison build-essential \
+            ccache curl g++-multilib gcc-multilib gnupg gperf imagemagick \
+            lib32ncurses5-dev lib32z1-dev libelf-dev liblz4-tool libncurses5 \
+            libncurses5-dev libsdl1.2-dev libxml2 libxml2-utils lzop pngcrush \
+            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev gcc-9
+
+      - name: Prepare toolchain
+        run: |
+          # RKSU 内核源码已 vendor 在 KernelSU/kernel，无需子模块拉取
+          # 工具链（AArch64 GCC 4.9）由构建脚本或环境提供
+          if [ ! -x aarch64-linux-android-4.9/bin/aarch64-linux-android-gcc ]; then
+            echo "请将 aarch64-linux-android-4.9 工具链放入仓库根目录（或修改 build.sh 的 CROSS_COMPILE）" >&2
+            exit 1
+          fi
+
+      - name: Build kernel
+        run: |
+          sudo ln -sf /usr/bin/python2.7 /usr/bin/python || true
+          export PATH=$(pwd)/aarch64-linux-android-4.9/bin/:$PATH
+          make O=out merge_kirin970_defconfig
+          make O=out -j$(nproc)
+
+      - name: Upload Image.gz
+        uses: actions/upload-artifact@v3
+        with:
+          name: NEO_EMUI9.1.0_RKSU-Image.gz
+          path: out/arch/arm64/boot/Image.gz
+
+      - name: Upload defconfig
+        uses: actions/upload-artifact@v3
+        with:
+          name: NEO_EMUI9.1.0_RKSU-defconfig
+          path: out/.config
