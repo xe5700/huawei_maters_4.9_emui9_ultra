@@ -33,3 +33,8 @@ CONFIG_ARM64_SW_TTBR0_PAN、CONFIG_HW_SLUB_DF 等，维持官方原值。
 - 24 项防 root 清单 grep "^CONFIG_X=y$" 全部为空（全部已关闭）
 - CONFIG_KSU=y / CONFIG_KSU_MANUAL_HOOK=y 各仅 1 处
 - git diff：30 insertions / 27 deletions，仅 defconfig 一个文件
+
+## 7. erofs 对齐（用户真机排查补充）
+官方发布 KERNEL.img 内嵌真实配置（IKCONFIG 提取）显示 `# CONFIG_EROFS_FS is not set`
+（文件系统为 ext4+f2fs，无 erofs）。官方开源源码 defconfig 与发布二进制不一致（源码里 =y）。
+为与真机一致，已将整个 CONFIG_EROFS_FS* 块改为 not set。
