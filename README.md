@@ -37,11 +37,11 @@
 1. 解锁 Bootloader（EMUI 9 需要解锁码）
 2. **正式刷入镜像**：从真机提取原厂 `KERNEL.img`（含 Hisilicon 头）后执行：
    ```bash
-   ./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img
+   SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img   # 默认 enforcing，RKSU 无需全局 permissive
    fastboot flash kernel kernel.img
    fastboot reboot
    ```
-3. 若刷 PM（permissive）内核，需先解密/格式化 DATA 分区
+3. 若确要刷 PM（permissive）内核（SELINUX_MODE=permissive），必须先将 DATA 解密并格式化，否则 bootloop
 4. 安装管理器：`KernelSU_v3.0.0-30-legacy`（[rsuntk/KernelSU Releases](https://github.com/rsuntk/KernelSU/releases)）
 
 ## ⚠️ 注意

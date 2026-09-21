@@ -23,7 +23,7 @@
 需要 MateRS 原厂 `KERNEL.img`（从真机 fastboot 提取或解包固件）：
 
 ```bash
-./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img
+SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img   # 默认 enforcing，RKSU 无需全局 permissive
 ```
 
 内部调用 `tools/repack_maters_boot.sh`：保留 Hisilicon 头 + 更新 Android 头内核大小 + cmdline 改 `androidboot.selinux=permissive`。
@@ -50,6 +50,6 @@ fastboot reboot
 ## 刷入注意事项
 
 1. 解锁 Bootloader（EMUI 9 需要解锁码）
-2. 若刷 PM（permissive）内核，需先解密/格式化 DATA 分区
+2. 若确要刷 PM（permissive）内核（SELINUX_MODE=permissive），必须先将 DATA 解密并格式化，否则 bootloop
 3. 安装 RKSU 管理器：`KernelSU_v3.0.0-30-legacy`（rsuntk/KernelSU release）
 4. 对应底包必须为 EMUI 9.1.0（内核 4.9.148）
