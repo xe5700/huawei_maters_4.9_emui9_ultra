@@ -1,13 +1,17 @@
 #!/bin/bash
 #===============================================================================
 # build.sh — 编译华为 MateRS (NEO) EMUI 9.1.0 RKSU 内核
-# 用法: ./build.sh [JOBS]     默认 JOBS=12（<=16，避免与游戏等占用冲突）
+# 用法: ./build.sh [JOBS]     默认 JOBS=23（24 核机器，用户已放开限制）
 # 前置: aarch64-linux-android-4.9 工具链已就位（见 README_BUILD.md）
 #===============================================================================
 set -euo pipefail
 
-JOBS="${1:-12}"
-[ "$JOBS" -le 16 ] || { echo "JOBS 超过 16，已强制限制为 16（用户要求）"; JOBS=16; }
+JOBS="${1:-23}"
+MAX_JOBS="$(nproc)"
+if [ "$JOBS" -gt "$MAX_JOBS" ]; then
+    echo "JOBS($JOBS) 超过核数($MAX_JOBS)，已限制为 $MAX_JOBS"
+    JOBS="$MAX_JOBS"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

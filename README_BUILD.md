@@ -11,7 +11,7 @@
 ## 编译
 
 ```bash
-./build.sh 12          # 12 线程（<=16，勿超）
+./build.sh 23          # 23 线程（24 核机器，可自行调）
 ```
 
 产物：`out/arch/arm64/boot/Image.gz`
