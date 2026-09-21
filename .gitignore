@@ -3,3 +3,8 @@ out/
 *.cmd
 *.tmp
 *.orig
+
+# build artifacts (repo-local)
+kernel*.img
+tools/Image.gz
+__pycache__/
