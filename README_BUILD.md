@@ -23,7 +23,7 @@
 需要 MateRS 原厂 `KERNEL.img`（从真机 fastboot 提取或解包固件）：
 
 ```bash
-SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img   # 默认 enforcing，RKSU 无需全局 permissive
+SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz NEO_EMUI9.1.0_RKSU.img   # 推荐：无头 enforcing，真机验证可启动
 ```
 
 内部调用 `tools/repack_maters_boot.sh`：保留 Hisilicon 头 + 更新 Android 头内核大小 + cmdline 改 `androidboot.selinux=permissive`。

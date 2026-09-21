@@ -1,5 +1,7 @@
 # NEO_EMUI9.1.0_RKSU
 
+> ✅ **真机验证通过**：`NEO_EMUI9.1.0_RKSU.img`（标准无头 bootimg + enforcing）已在 MateRS EMUI 9.1.0 启动成功（2026-09-22）。Hisilicon 头非必需；permissive 才会要求解密/格式化 DATA。
+
 华为 MateRS (NEO) · EMUI 9.1.0 · Linux 4.9.148 · **RKSU** (rsuntk/KernelSU v3.0.0-30-legacy)
 
 基于华为官方 EMUI 9.1.0 开源内核的 RKSU 修改版内核适配仓库。
@@ -37,7 +39,7 @@
 1. 解锁 Bootloader（EMUI 9 需要解锁码）
 2. **正式刷入镜像**：从真机提取原厂 `KERNEL.img`（含 Hisilicon 头）后执行：
    ```bash
-   SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz kernel.img /path/to/original_KERNEL.img   # 默认 enforcing，RKSU 无需全局 permissive
+   SELINUX_MODE=enforcing ./pack.sh out/arch/arm64/boot/Image.gz NEO_EMUI9.1.0_RKSU.img   # 推荐：无头 enforcing，真机验证可启动
    fastboot flash kernel kernel.img
    fastboot reboot
    ```
