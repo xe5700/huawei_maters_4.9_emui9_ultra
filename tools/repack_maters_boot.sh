@@ -48,16 +48,18 @@ with open(new_kernel_path, 'rb') as f:
 
 kpadded = ((new_ksize + page_size - 1) // page_size) * page_size
 
-# 构建: Hisilicon头 + Android头(更新内核大小+permissive cmdline) + 新内核
+# 构建: Hisilicon头 + Android头(更新内核大小+SELINUX_MODE cmdline) + 新内核
 img = bytearray()
 img.extend(orig[:hisi_sz])  # Hisilicon 头部不变
 
 hdr = bytearray(orig[hisi_sz:koff])
 struct.pack_into('<I', hdr, 8, new_ksize)  # 更新 kernel_size
 
-# 改 cmdline 为 permissive (offset 0x40)
+# 改 cmdline 的 selinux 参数 (offset 0x40)；模式由环境变量 SELINUX_MODE 控制
+import os, re
+selinux_mode = os.environ.get('SELINUX_MODE', 'permissive')  # enforcing | permissive
 old_cmd = hdr[64:].split(b'\x00')[0].decode('ascii')
-new_cmd = old_cmd.replace('androidboot.selinux=enforcing', 'androidboot.selinux=permissive')
+new_cmd = re.sub(r'androidboot\.selinux=\w+', 'androidboot.selinux=' + selinux_mode, old_cmd)
 print(f'原 cmdline: {old_cmd}')
 print(f'新 cmdline: {new_cmd}')
 cbytes = new_cmd.encode('ascii')[:511]

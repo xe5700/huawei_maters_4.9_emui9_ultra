@@ -2,7 +2,9 @@
 #===============================================================================
 # pack.sh — 打包内核镜像
 # 用法 A（推荐，保留 Hisilicon 头）:
-#   ./pack.sh <Image.gz> <输出.img> <原厂KERNEL.img>
+#   SELINUX_MODE=enforcing|permissive ./pack.sh <Image.gz> <输出.img> <原厂KERNEL.img>
+#     默认 enforcing（RKSU 走 per-domain permissive，不需要全局 permissive；
+#     permissive 需先解密/格式化 DATA 分区，否则 bootloop）
 # 用法 B（无原厂镜像时的临时方案，缺 Hisilicon 头，刷入大概率无法开机）:
 #   ./pack.sh <Image.gz> <输出.img>
 #===============================================================================
@@ -14,9 +16,10 @@ cd "$SCRIPT_DIR"
 NEW_KERNEL="${1:-out/arch/arm64/boot/Image.gz}"
 OUTPUT="${2:-kernel.img}"
 ORIGINAL="${3:-}"
+export SELINUX_MODE="${SELINUX_MODE:-enforcing}"
 
 if [ -n "$ORIGINAL" ]; then
-    echo "==> repack_maters_boot.sh 方案（保留 Hisilicon 头 + cmdline 改 permissive）"
+    echo "==> repack_maters_boot.sh 方案（保留 Hisilicon 头，SELINUX_MODE=$SELINUX_MODE）"
     tools/repack_maters_boot.sh "$NEW_KERNEL" "$OUTPUT" "$ORIGINAL"
 else
     echo "==> 未提供原厂镜像，退回 mkbootimg 方案（仅验证产物，不建议刷入）"
