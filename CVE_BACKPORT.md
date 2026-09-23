@@ -283,6 +283,28 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 `CVE-2019-2215`（binder UAF，CVSS 7.8，Android 史上最著名的在野利用提权漏洞之一）、
 `CVE-2020-0030`、`CVE-2021-39686`、`CVE-2019-11599`、`CVE-2018-20510`。
 
+### 7.1 补充核查：华为是否已自行加固这些项？
+
+针对「华为可能自己加固过」这一判断，对 binder 相关项逐条做了**功能性验证**（不只看新增行字符串，而是查关键机制是否在位）：
+
+| CVE | CVSS | 华为是否已修 | 判定依据 |
+|---|---|---|---|
+| **CVE-2019-2215** | 7.8 | ✅ **已修** | `BINDER_LOOPER_STATE_POLL` 机制齐全：枚举定义（`binder.c:630`）、`binder_poll` 置位（`5035`）、线程释放时 `wake_up_poll(&thread->wait, POLLHUP \| POLLFREE)`（`5000-5002`）；上游补丁的整段注释与代码均在位 |
+| **CVE-2020-0030** | 7.0 | ✅ **已修** | 补丁 6/6 新增行均存在 |
+| **CVE-2018-20510** | 5.5 | ⚠️ 部分 | 4 行中 3 行在位（`%p`→`%pK` 信息泄露，本身低危） |
+| **CVE-2021-39686** | 7.0 | ❌ **未修** | `drivers/android/binder.c:3383` 仍为 `t->sender_euid = task_euid(proc->tsk);`（有漏洞写法）；补丁要求的 `struct binder_proc.cred` 字段与 `get_cred(filp->f_cred)`/`put_cred()` 均不存在 |
+| **CVE-2019-11599 / CVE-2019-3892** | 7.0 | ❌ **基本未修** | 同一提交修复两项（sha `16903f1a5ba7`）；各文件存在率 `mm/mmap.c` 0/4、`include/linux/mm.h` 0/14、`drivers/android/binder.c` 0/4、`fs/proc/task_mmu.c` 1/12、`fs/userfaultfd.c` 2/5 —— coredump 竞争条件修复整体缺失 |
+
+**结论（对「华为可能自己加固过」的校准）**：
+
+- ✅ **对 binder 成立**：华为**确实独立加固过** binder —— 危害最大的 `CVE-2019-2215` 与 `CVE-2020-0030` 都已修复，
+  且 `BINDER_LOOPER_STATE_POLL` 取值华为用 `0x20` 而上游用 `0x40`，说明是**华为自己的实现**，不是机械回移。
+- ❌ **但不均匀**：`CVE-2021-39686` 与 coredump 竞争条件（`CVE-2019-11599`/`CVE-2019-3892`）**确实缺失**。
+- ⚠️ **不宜推广为「华为都修过」**：本次回移在 CAIF/TIPC 两个未启用子系统中发现的上游补丁缺陷说明，
+  未被编译器覆盖的代码路径长期缺乏检验，不能假定其已被加固。
+
+因此建议：binder 组可按「风险可接受」不修，但**应知悉 `CVE-2021-39686` 与 coredump 竞争条件确实未修**，由你决定是否补。
+
 ---
 
 ## 8. 完整性与构建验证
