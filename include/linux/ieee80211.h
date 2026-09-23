@@ -1960,6 +1960,16 @@ enum ieee80211_eid {
 
 	WLAN_EID_VENDOR_SPECIFIC = 221,
 	WLAN_EID_QOS_PARAMETER = 222,
+
+	/*
+	 * 本地补充（4.9.y 的上游回移遗漏此项）：
+	 * for_each_element_extid() 宏引用 WLAN_EID_EXTENSION，但上游 4.9.337 的
+	 * enum ieee80211_eid 中并未定义它。该宏在 4.9.y 中未被使用，故上游从未
+	 * 暴露此问题。此处按主线取值补入（v5.4: WLAN_EID_EXTENSION = 255，
+	 * IEEE 802.11 Element ID Extension），否则将来任何使用该宏的代码都会
+	 * 编译失败。本枚举中无其它成员取值为 255，不存在冲突。
+	 */
+	WLAN_EID_EXTENSION = 255,
 };
 
 /* Action category code */
