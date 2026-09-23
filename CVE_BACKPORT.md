@@ -359,3 +359,23 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 **有意保留拆分**——两个适配提交是「上游补丁不适用于 4.9.148」的独立证据，squash 会掩盖这一事实，不利于后续审计。
 
 **待 t1-manual 回答的 1 条**（原提示 #3）：CVE-2026-43503 的正确性确认，已由 t1-manual 专门审阅（见 §11 表格）。
+
+### 11.2 t2-core 审阅结果：51 文件全部通过
+
+审阅范围：`kernel/ mm/ fs/ ipc/ security/ block/ init/ include/` 共 51 个文件。
+
+| 审阅要点 | 结论 |
+|---|---|
+| 新增符号是否在 4.9.148 中存在 | ✅ 40+ 个符号逐一核对通过（`percpu_ref_is_zero` / `get_pid` / `POLLFREE` / `atomic64_cmpxchg_relaxed` / `MAX_RW_COUNT` / `kref_get_unless_zero` / `i_sequence` 等） |
+| 三方合并残留标记 | ✅ 全文无 `<<<<<<<` / `=======` / `>>>>>>>` |
+| `Kconfig` / `Makefile` 改动 | ✅ 仅 `drivers/char/Kconfig`（CVE-2019-11486 预期改动） |
+| 逐子系统逻辑 | ✅ block(RCU) / futex(`futex_key` union inode→i_sequence) / perf(`detach_rest`) / ptrace / auditfilter / cgroup / THP / memory-failure / eventpoll 错误路径 / inode `i_sequence` / 9p / ext4(`eh_generation`) / NFS / XFS / ocfs2 / nilfs2 / SELinux(`nlmsg_perm`) 均判定正确 |
+
+**船长独立复核（不直接采信审阅结论）**：
+
+| 复核项 | 方法 | 结果 |
+|---|---|---|
+| 三方合并残留 | 自行对全部新增行做冲突标记正则扫描 | ✅ 无命中（与审阅结论一致） |
+| `kref_read` 是否彻底清除 | 全树 `grep -rn kref_read` | ✅ 无任何引用 |
+| 抽检 6 个符号的定义位置 | 全树定位 | ✅ 全部存在；其中 `detach_rest` 为 `kernel/events/core.c:5191` 局部变量、`eh_generation` 为 `fs/ext4/extents.h:102` 结构体字段（初次只在 `include/` 内检索造成误报，已澄清） |
+| 最终裁决 | — | **审阅结论成立，未发现需修正项** |
