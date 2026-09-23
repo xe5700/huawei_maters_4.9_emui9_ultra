@@ -5,6 +5,6 @@ out/
 *.orig
 
 # build artifacts (repo-local)
-kernel*.img
+/*.img
 tools/Image.gz
 __pycache__/
