@@ -9,7 +9,7 @@
 ## 0. 一句话结论
 
 - **已回移并提交 131 个 CVE 修复**（其中 `CVE-2026-43503` 为手工适配的主线修复），补丁原文全部保存在 `cve-patches/`。
-- 分支共 **134 个提交** = 131 个 CVE 修复 + 1 个 `.gitignore` 加固 + 2 个构建问题修复（见 §9.1）。
+- 分支共 **135 个提交** = 131 个 CVE 修复 + 1 个 `.gitignore` 加固 + 2 个构建问题修复（见 §9.1）+ 1 个文档提交。
 - **内核版本号保持 4.9.148 不变**：未改动 `Makefile` 的 VERSION/PATCHLEVEL/SUBLEVEL/EXTRAVERSION（已逐提交校验）。
 - **每个 CVE 一个独立 git 提交**，提交信息含 CVE 编号、stable 提交哈希、upstream 提交哈希。
 - **CVE-2026-31431 (Copy Fail) 经实证判定对本机不适用**，无需修复（见 §5）。
@@ -26,7 +26,7 @@
 | 不更改内核版本号 | ✅ 遵守 | `head -4 Makefile` → `SUBLEVEL = 148`；流水线含 Makefile 版本 hunk 剥离逻辑 |
 | 只打 CVE 补丁，不做版本升级 | ✅ 遵守 | 逐 CVE 独立提交，非增量版本补丁（不含 4.9.149→337 的非安全改动） |
 | 增加 git 提交记录 | ✅ 遵守 | 131 个 CVE 提交 + 补丁归档提交 |
-| 保留补丁文件 | ✅ 遵守 | `cve-patches/<CVE-ID>.patch` 共 131 个 |
+| 保留补丁文件 | ✅ 遵守 | `cve-patches/` 共 **133 个** = 131 个上游补丁原文 + 2 个 4.9 适配补丁 |
 | 剔除低危漏洞 | ✅ 遵守 | 剔除 CVSS<7.0 共 165 项 |
 | 剔除主线驱动/KVM | ✅ 遵守 | 剔除无关驱动 80 项、非 arm64 架构 6 项 |
 
@@ -337,3 +337,25 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 | t4-integrity | m4-integrity | LongCat-2.0 | 硬约束与交付完整性校验 |
 
 > 用户提到的 `hy3` 模型在全部 8 个已注册 provider（sensenova / longcat / agentrouter / tokenrouter / nvidia / amd / sensenova-calibrate0547 / llamacpp）中均未找到，故本次未使用；如需启用请提供其 provider 与模型 id。
+
+### 11.1 t4-integrity 审阅结果：6/6 通过
+
+| # | 检查项 | 结论 |
+|---|---|---|
+| 1 | 内核版本号未被修改 | ✅ `git diff bd7e6f9de HEAD -- Makefile` 为空；`SUBLEVEL = 148` |
+| 2 | 每个 CVE 一个独立提交 | ✅ 区间 134 提交，唯一 CVE 号 131 个，非 CVE 主题仅补丁归档提交 1 条 |
+| 3 | 未混入 `.img` | ✅ 全区间 `--name-only` 无 `.img` 命中 |
+| 4 | 补丁文件已保留 | ✅ 双向 `comm` 比对无缺失、无多出 |
+| 5 | 提交信息质量 | ✅ 129/131 主 CVE 提交含上游哈希 |
+| 6 | `.gitignore` 正确性 | ✅ 根级 `/*.img` 命中；25 个驱动固件 `.img` 未被忽略（`check-ignore` 退出码 1） |
+
+**审阅者指出并已由船长处理的 1 条真实缺口**（原提示 #2）：
+归档提交 `d3e0051e7` 只保存了当时的 131 个上游补丁，其后两次**编译适配提交**（`9d4feef92` 的 `kref_read` 改写、`8c2724ddf` 的 `for_each_element` 宏族回移）没有对应补丁文件，归档不自洽。
+
+→ 已修复：补入 `cve-patches/CVE-2022-20566-4.9-adapt.patch` 与 `cve-patches/CVE-2019-16746-4.9-adapt.patch`，
+并新增 `cve-patches/README.md` 说明「上游原文补丁」与「4.9 适配补丁」两类文件的区别。现共 **133** 个补丁文件。
+
+**未采纳的 1 条提示**（原提示 #1）：CVE-2019-16746 与 CVE-2022-20566 各有 2 个提交（主修复 + 编译适配）。
+**有意保留拆分**——两个适配提交是「上游补丁不适用于 4.9.148」的独立证据，squash 会掩盖这一事实，不利于后续审计。
+
+**待 t1-manual 回答的 1 条**（原提示 #3）：CVE-2026-43503 的正确性确认，已由 t1-manual 专门审阅（见 §11 表格）。
