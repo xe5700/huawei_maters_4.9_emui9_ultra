@@ -501,7 +501,7 @@ void l2cap_chan_hold(struct l2cap_chan *c)
 
 struct l2cap_chan *l2cap_chan_hold_unless_zero(struct l2cap_chan *c)
 {
-	BT_DBG("chan %p orig refcnt %u", c, kref_read(&c->kref));
+	BT_DBG("chan %p orig refcnt %u", c, atomic_read(&c->kref.refcount));
 
 	if (!kref_get_unless_zero(&c->kref))
 		return NULL;
