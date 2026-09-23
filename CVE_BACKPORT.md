@@ -379,3 +379,20 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 | `kref_read` 是否彻底清除 | 全树 `grep -rn kref_read` | ✅ 无任何引用 |
 | 抽检 6 个符号的定义位置 | 全树定位 | ✅ 全部存在；其中 `detach_rest` 为 `kernel/events/core.c:5191` 局部变量、`eh_generation` 为 `fs/ext4/extents.h:102` 结构体字段（初次只在 `include/` 内检索造成误报，已澄清） |
 | 最终裁决 | — | **审阅结论成立，未发现需修正项** |
+
+### 11.3 t1-manual 审阅结果：3 个手工改动文件，发现并修复 1 个 medium 问题
+
+| 文件 | 审阅结论 |
+|---|---|
+| `net/core/skbuff.c`（`97f7b6bca`，CVE-2026-43503） | ✅ **未发现问题**。6 处修复（`__pskb_copy_fclone` / `skb_shift` / `skb_segment`×2 / `skb_gro_receive` / `skb_try_coalesce`）标记传播方向均为 src→dst；4.9 适配（`tx_flags`/`SKBTX_SHARED_FRAG`）正确；`frag_skb` 无空指针风险；`tcp_clone_payload` 与 `skb_gro_receive_list` 正确未移植（4.9 不存在） |
+| `net/bluetooth/l2cap_core.c`（`9d4feef92`） | ✅ **未发现问题**。`atomic_read(&c->kref.refcount)` 与 `kref_read` 等价，与文件既有模式一致，include 完整 |
+| `include/linux/ieee80211.h`（`8c2724ddf`） | ⚠️ 1 medium + 1 low，见下 |
+
+**发现的问题与处置**：
+
+| 级别 | 问题 | 船长复核 | 处置 |
+|---|---|---|---|
+| **medium** | `for_each_element_extid` 宏（第 2666 行）引用 `WLAN_EID_EXTENSION`，但 `enum ieee80211_eid` 中无此成员；宏当前未被使用故编译通过，将来一旦使用即编译失败 | **核实成立，且比报告更严重**：上游 **4.9.337 自身也有同样遗漏**（其 ieee80211.h 的同一宏同样引用未定义的 `WLAN_EID_EXTENSION`）。本树此前的植入与上游逐字节一致，故该缺陷源自上游 4.9.y 的回移疏漏 | ✅ **已修**（`e4278eda4`）：按主线取值补入 `WLAN_EID_EXTENSION = 255`（v5.4 内核确认）。枚举中无其它成员取值 255，无冲突；宏此前未被使用，对现有二进制零行为影响。定向重编 `net/wireless/nl80211.o` 通过 |
+| **low** | 宏定义与上游 `ad180ca` 非逐字符一致（5 处差异：`__packed`、参数名、const 强转、`(int)sizeof` 等） | **不成立**：已逐字节比对，本树植入块与**上游 4.9.337 原文完全一致**（`diff` 无差异）。审阅者对比的是另一参考版本（引入该宏的原始提交或主线版本），对 4.9 回移而言 4.9.337 才是正确基准 | 无需改动 |
+
+> 结论：t1 的 medium 发现有效且已修复，并额外暴露出一个**上游 4.9.y 自身的缺陷**；low 项为基准选错，已澄清。
