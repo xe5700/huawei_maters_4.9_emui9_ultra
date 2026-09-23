@@ -333,10 +333,10 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 |---|---|---|---|
 | t1-manual | m1-manual | sensenova-6.8-flash-lite | 3 个手工改动文件（`net/core/skbuff.c` / `include/linux/ieee80211.h` / `net/bluetooth/l2cap_core.c`） |
 | t2-core | m2-core | LongCat-2.0 | `kernel/ mm/ fs/ ipc/ security/ block/ init/ include/`（51 文件） |
-| t3-netdrv | m3-netdrv | sensenova-6.8-flash-lite | `net/` 与 `drivers/`（104 文件） |
-| t4-integrity | m4-integrity | LongCat-2.0 | 硬约束与交付完整性校验 |
+| t3-netdrv | m3-netdrv | workbuddy/hy3 | `net/` 与 `drivers/`（104 文件） |
+| t4-integrity | m4-integrity | workbuddy-ai/hy4-preview-f | 硬约束与交付完整性校验 |
 
-> 用户提到的 `hy3` 模型在全部 8 个已注册 provider（sensenova / longcat / agentrouter / tokenrouter / nvidia / amd / sensenova-calibrate0547 / llamacpp）中均未找到，故本次未使用；如需启用请提供其 provider 与模型 id。
+> 注：`m3-netdrv` 与 `m4-integrity` 的模型由用户在 Web 审阅界面将计划改为 `workbuddy/hy3` 与 `workbuddy-ai/hy4-preview-f` 后执行（这两条路由未出现在 `list_subagent_models` 的注册清单中，属于用户侧提供的可用免费模型）。
 
 ### 11.1 t4-integrity 审阅结果：6/6 通过
 
