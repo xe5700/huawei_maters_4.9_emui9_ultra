@@ -1696,7 +1696,7 @@ net_hw_hook_localout:
 	cmp	w1, 6
 	beq	.L160
 	.loc 1 55 0
-	ldr	x0, [x0,744]
+	ldr	x0, [x0,752]
 .LVL228:
 	cbz	x0, .L160
 	.loc 1 55 0 is_stmt 0 discriminator 1
@@ -1783,11 +1783,11 @@ net_hw_hook_localout:
 .LBB265:
 	.loc 1 207 0
 	mov	w1, 104
-	str	w1, [x0,616]
+	str	w1, [x0,624]
 	.loc 1 208 0
 	ldr	x1, [x19,24]
 	mov	x0, x1
-	ldr	x1, [x1,840]
+	ldr	x1, [x1,848]
 	blr	x1
 .LVL241:
 	.loc 1 209 0
@@ -1796,7 +1796,7 @@ net_hw_hook_localout:
 	mov	w1, w21
 	add	x0, x0, :lo12:.LC17
 	mov	x3, x19
-	ldr	w2, [x4,616]
+	ldr	w2, [x4,624]
 	bl	printk
 .LVL242:
 .LBE265:
