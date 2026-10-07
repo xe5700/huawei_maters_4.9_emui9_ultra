@@ -8,3 +8,6 @@ out/
 /*.img
 tools/Image.gz
 __pycache__/
+
+# scratch workspace (analysis drafts, not deliverables)
+.scratch/
