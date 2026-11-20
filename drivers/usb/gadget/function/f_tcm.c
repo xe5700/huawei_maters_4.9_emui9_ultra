@@ -392,12 +392,12 @@ static void bot_set_alt(struct f_uas *fu)
 
 	fu->flags = USBG_IS_BOT;
 
-	config_ep_by_speed(gadget, f, fu->ep_in);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_in, USB_G_ALT_INT_BBB);
 	ret = usb_ep_enable(fu->ep_in);
 	if (ret)
 		goto err_b_in;
 
-	config_ep_by_speed(gadget, f, fu->ep_out);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_out, USB_G_ALT_INT_BBB);
 	ret = usb_ep_enable(fu->ep_out);
 	if (ret)
 		goto err_b_out;
@@ -849,21 +849,21 @@ static void uasp_set_alt(struct f_uas *fu)
 	if (gadget->speed == USB_SPEED_SUPER)
 		fu->flags |= USBG_USE_STREAMS;
 
-	config_ep_by_speed(gadget, f, fu->ep_in);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_in, USB_G_ALT_INT_UAS);
 	ret = usb_ep_enable(fu->ep_in);
 	if (ret)
 		goto err_b_in;
 
-	config_ep_by_speed(gadget, f, fu->ep_out);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_out, USB_G_ALT_INT_UAS);
 	ret = usb_ep_enable(fu->ep_out);
 	if (ret)
 		goto err_b_out;
 
-	config_ep_by_speed(gadget, f, fu->ep_cmd);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_cmd, USB_G_ALT_INT_UAS);
 	ret = usb_ep_enable(fu->ep_cmd);
 	if (ret)
 		goto err_cmd;
-	config_ep_by_speed(gadget, f, fu->ep_status);
+	config_ep_by_speed_and_alt(gadget, f, fu->ep_status, USB_G_ALT_INT_UAS);
 	ret = usb_ep_enable(fu->ep_status);
 	if (ret)
 		goto err_status;
@@ -2108,6 +2108,21 @@ static void tcm_delayed_set_alt(struct work_struct *wq)
 	usb_composite_setup_continue(fu->function.config->cdev);
 }
 
+static int tcm_get_alt(struct usb_function *f, unsigned intf)
+{
+	struct f_uas *fu = to_f_uas(f);
+
+	/*
+	 * composite_setup() refuses any non-zero altsetting unless the function
+	 * provides get_alt(); without it the host's SET_INTERFACE for the UAS
+	 * altsetting is stalled with -EOPNOTSUPP ("ep0 setup error, ret -95")
+	 * and the device never enumerates as UAS.
+	 */
+	if (fu->flags & USBG_IS_UAS)
+		return USB_G_ALT_INT_UAS;
+	return USB_G_ALT_INT_BBB;
+}
+
 static int tcm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
 	struct f_uas *fu = to_f_uas(f);
@@ -2315,6 +2330,7 @@ static struct usb_function *tcm_alloc(struct usb_function_instance *fi)
 	fu->function.bind = tcm_bind;
 	fu->function.unbind = tcm_unbind;
 	fu->function.set_alt = tcm_set_alt;
+	fu->function.get_alt = tcm_get_alt;
 	fu->function.setup = tcm_setup;
 	fu->function.disable = tcm_disable;
 	fu->function.free_func = tcm_free;
