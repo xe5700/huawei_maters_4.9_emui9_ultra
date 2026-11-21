@@ -593,6 +593,9 @@ struct dwc3_ep {
 #define DWC3_EP_MISSED_ISOC	(1 << 6)
 #define DWC3_EP_END_TRANSFER_PENDING	(1 << 7)
 #define DWC3_EP_TRANSFER_STARTED (1 << 8)
+#define DWC3_EP_FORCE_RESTART_STREAM (1 << 9)
+#define DWC3_EP_IGNORE_NEXT_NOSTREAM (1 << 10)
+#define DWC3_EP_FIRST_STREAM_PRIMED (1 << 11)
 
 	/* This last one is specific to EP0 */
 #define DWC3_EP0_DIR_IN		(1 << 31)
@@ -1116,6 +1119,9 @@ struct dwc3_event_depevt {
 /* Stream event only */
 #define DEPEVT_STREAMEVT_FOUND		1
 #define DEPEVT_STREAMEVT_NOTFOUND	2
+
+#define DEPEVT_STREAM_PRIME		0xfffe
+#define DEPEVT_STREAM_NOSTREAM		0x0
 
 /* Control-only Status */
 #define DEPEVT_STATUS_CONTROL_DATA	1

@@ -2109,7 +2109,7 @@ static bool target_read_prot_action(struct se_cmd *cmd)
 static void target_complete_ok_work(struct work_struct *work)
 {
 	struct se_cmd *cmd = container_of(work, struct se_cmd, work);
-	int ret;
+	int ret = 0;
 
 	/*
 	 * Check if we need to move delayed/dormant tasks from cmds on the
@@ -2135,6 +2135,9 @@ static void target_complete_ok_work(struct work_struct *work)
 					cmd, 0, 1);
 		if (ret == -EAGAIN || ret == -ENOMEM)
 			goto queue_full;
+		/* fabric may have released cmd; see comment at the end */
+		if (ret)
+			return;
 
 		transport_lun_remove_cmd(cmd);
 		transport_cmd_check_stop_to_fabric(cmd);
@@ -2161,6 +2164,9 @@ static void target_complete_ok_work(struct work_struct *work)
 						rc, 0);
 			if (ret == -EAGAIN || ret == -ENOMEM)
 				goto queue_full;
+			/* fabric may have released cmd; see comment at the end */
+			if (ret)
+				return;
 
 			transport_lun_remove_cmd(cmd);
 			transport_cmd_check_stop_to_fabric(cmd);
@@ -2222,6 +2228,17 @@ queue_status:
 	default:
 		break;
 	}
+
+	/*
+	 * A fabric error other than -EAGAIN/-ENOMEM means the fabric module
+	 * already released the command on its error path: f_tcm calls
+	 * transport_generic_free_cmd() from its completion/cleanup handler
+	 * (f_tcm.c uasp_prepare_r_request()/uasp_data_cmpl()), which can run
+	 * inline from queue_data_in()/queue_status(). Touching cmd here would
+	 * be a use-after-free, so stop.
+	 */
+	if (ret)
+		return;
 
 	transport_lun_remove_cmd(cmd);
 	transport_cmd_check_stop_to_fabric(cmd);
