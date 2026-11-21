@@ -593,6 +593,7 @@ static int dwc3_gadget_set_ep_config(struct dwc3 *dwc, struct dwc3_ep *dep,
 
 	if (usb_ss_max_streams(comp_desc) && usb_endpoint_xfer_bulk(desc)) {
 		params.param1 |= DWC3_DEPCFG_STREAM_CAPABLE
+			| DWC3_DEPCFG_XFER_COMPLETE_EN
 			| DWC3_DEPCFG_STREAM_EVENT_EN;
 		dep->stream_capable = true;
 	}
@@ -704,6 +705,16 @@ static int __dwc3_gadget_ep_enable(struct dwc3_ep *dep,
 		trb_link->bph = upper_32_bits(dwc3_trb_dma_offset(dep, trb_st_hw));
 		trb_link->ctrl |= DWC3_TRBCTL_LINK_TRB;
 		trb_link->ctrl |= DWC3_TRB_CTRL_HWO;
+
+		/*
+		 * Stream capable endpoints: ask the controller to re-initiate
+		 * the stream on a host NoStream rejection until the host primes
+		 * the endpoint again. The v5.10 no-op TRB that normally precedes
+		 * this cannot be used here: this SoC rejects START_TRANSFER on a
+		 * freshly enabled endpoint with "no transfer resource available".
+		 */
+		if (dep->stream_capable)
+			dep->flags |= DWC3_EP_FORCE_RESTART_STREAM;
 	}
 
 	return 0;
@@ -1263,6 +1274,9 @@ static int __dwc3_gadget_ep_queue(struct dwc3_ep *dep, struct dwc3_request *req)
 	req->epnum		= dep->number;
 
 	trace_dwc3_ep_queue(req);
+
+	if (dep->stream_capable && req->request.is_last)
+		dep->flags |= DWC3_EP_WAIT_TRANSFER_COMPLETE;
 
 	/*
 	 * We only add to our list of requests now and
@@ -2556,10 +2570,26 @@ static void dwc3_gadget_endpoint_stream_event(struct dwc3_ep *dep,
 
 		break;
 	case DEPEVT_STREAM_NOSTREAM:
+		if ((dep->flags & DWC3_EP_IGNORE_NEXT_NOSTREAM) ||
+		    !(dep->flags & DWC3_EP_FORCE_RESTART_STREAM) ||
+		    !(dep->flags & DWC3_EP_WAIT_TRANSFER_COMPLETE))
+			break;
+
 		/*
-		 * Without DWC3_EP_WAIT_TRANSFER_COMPLETE we cannot safely force
-		 * a restart here, so just ignore this event.
+		 * Some hosts keep the endpoint idle after a NoStream rejection
+		 * and never prime again, so the controller never generates the
+		 * ERDY needed to restart the stream. Force the re-initiation
+		 * until the host is ready.
 		 */
+		if (dwc3_is_usb31(dep->dwc)) {
+			dwc3_send_gadget_generic_command(dep->dwc,
+					DWC3_DGCMD_SET_ENDPOINT_PRIME,
+					dep->number);
+		} else {
+			dep->flags |= DWC3_EP_DELAY_START;
+			dwc3_stop_active_transfer(dep, true, true);
+			return;
+		}
 		break;
 	}
 
