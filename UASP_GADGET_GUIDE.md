@@ -483,7 +483,8 @@ intf_found:
 | `kernel-uasp-gadget.img` | 15,153,152 字节，sha256 `5e3742e45095bb3e483d178e6837ed6f6331acd5f3ad9ebc74c8847e7ef324de` |
 | `kernel-uasp-gadget2.img` | 15,155,200 字节，sha256 `6f7c75429e3e964ef1ec77070471d2981c6652c0862ba5aabe4acab113498010`（含 §5.1 `get_alt`） |
 | `kernel-uasp-gadget3.img` | 15,155,200 字节，sha256 `7a170df11ae0343f88a5a02f8a43be46172c7e5f87bb0dd918ae084b72c6af20`（含 §5.1 + §5.2） |
-| 内核版本 | `4.9.148-NEO_EMUI9.1.0_RKSU_xixiaobei@Github+ #23 SMP PREEMPT Sat Nov 21 01:10:16 CST 2026` |
+| `kernel-uasp-gadget23.img` | 15,155,200 字节，sha256 `0e77f5d324f53779a162cd751215817273239610a7b79b4b5c2bb65094a04a17`（**干净版**：含 §5.1–§5.4 全部补丁，已移除 `UASPDBG` 调试探针） |
+| 内核版本 | `4.9.148-NEO_EMUI9.1.0_RKSU_xixiaobei@Github+ #43 SMP PREEMPT Sat Nov 21 17:31:05 CST 2026` |
 
 镜像为**标准 Android bootimg**（`ANDROID!` magic、page_size 2048、
 header_version 1、`androidboot.selinux=enforcing`），
@@ -510,3 +511,151 @@ payload 与 `out/arch/arm64/boot/Image.gz` 的 sha256 **逐字节一致**。
 - [ ] `nm out/vmlinux | grep -E "tcm_alloc|uasp_|fd_alloc_device"` 有符号
 - [ ] 跑 `tools/abi-verify.sh` 确认既有 ABI 修复未被破坏
 - [ ] 打包后核对 payload sha256 与 `Image.gz` 一致
+
+---
+
+## 5.3 ⚠️ 必须打的第三个补丁：UAS 数据通路在真机上会触发 use-after-free panic
+
+**现象**（内核 `#23`，UASP 配置生效后）：
+
+```
+BUG: spinlock bad magic on CPU#0, kworker/0:0/30864
+ lock: 0xffffffe5bd87a388, .magic: 00000000, .owner: <none>/-1, .owner_cpu: 0
+Workqueue: target_completion target_complete_ok_work
+Call trace: spin_bug → do_raw_spin_lock → _raw_spin_lock_irqsave
+            → transport_cmd_check_stop+0x2c → target_complete_ok_work+0x12c
+            → process_one_work → worker_thread → kthread
+Unable to handle kernel NULL pointer dereference at virtual address 00000078
+PC is at transport_cmd_check_stop+0x54/0xd0
+Kernel panic - not syncing: Fatal exception
+```
+
+寄存器转储里 `se_cmd` 指向的内存是 `dead4ead` / `c999c999` 毒化 pattern
+→ **`se_cmd` 已被释放，`target_complete_ok_work()` 还在用它**。
+
+**归因**：`drivers/target/` 是华为原厂未改动代码
+（`git log -- drivers/target/ include/target/` 只有 `82d10cabe Import Huawei NEO EMUI9.1.0 opensource kernel baseline`）。
+触发链：UAS 数据 IN 失败 → `f_tcm.c` 的 cleanup 路径调
+`transport_generic_free_cmd()` → 而 `target_complete_ok_work()`
+（`drivers/target/target_core_transport.c:2109`）只对 `-EAGAIN/-ENOMEM` 做保护，
+其它错误码会一路走到 `transport_lun_remove_cmd(cmd)` → UAF。
+
+**补丁**（`drivers/target/target_core_transport.c`，18 insertions / 1 deletion）：
+`int ret;` → `int ret = 0;`，并在三处 fabric 回调之后加
+
+```c
+		/* fabric may have released cmd; see comment at the end */
+		if (ret)
+			return;
+```
+
+位置：`SCF_TRANSPORT_TASK_SENSE` 分支、`transport_complete_callback` 分支、
+以及 `queue_rsp` switch 之后（`transport_lun_remove_cmd(cmd)` 之前）。
+
+---
+
+## 5.4 ⚠️ 必须打的第四个补丁：START_TRANSFER 未带 stream 参数
+
+**现象**：绑定成功、`set_alt` 正常（`Using the BOT protocol` → `Using the UAS protocol`），
+但 PC 端 INQUIRY 超时；设备 trace 显示数据 IN 的 TRB 带 `SID_SOFN(1)`，主机却 20 秒不完成。
+
+**根因**：`drivers/usb/dwc3/gadget.c` `__dwc3_gadget_kick_transfer()` 里
+
+```c
+	cmd = DWC3_DEPCMD_STARTTRANSFER | DWC3_DEPCMD_PARAM(cmd_param);   /* cmd_param 恒 0 */
+```
+
+对 stream-capable 端点，START_TRANSFER 的参数就是**要启动的 stream**。
+参数给 0 → 控制器启动默认 stream 0，而 TRB 里写的是 `SID_SOFN(1)` → 永远不匹配。
+
+上游 v5.10（`.scratch/dwc3-gadget-v510.c:1366-1373`）是：
+
+```c
+		cmd = DWC3_DEPCMD_STARTTRANSFER;
+		if (dep->stream_capable)
+			cmd |= DWC3_DEPCMD_PARAM(req->request.stream_id);
+```
+
+这正是 `[PATCH v7 00/10] usb: dwc3: Fix broken BULK stream support to dwc3 gadget driver`
+（Anurag Kumar Vulisha, Xilinx, 2018-12-01）修的东西。
+
+**同时回移**（同属上游 stream 支持，本树缺失）：
+
+- `include/linux/usb/gadget.h`：`struct usb_request` 加 `unsigned is_last:1;`
+- `dwc3_prepare_one_trb()`：CSP **只在 OUT 且非 stream** 时置位；`ISP_IMI` 只在 OUT 且
+  `short_not_ok` 时置位；`IOC` 不再附带 `ISP_IMI`；
+  `else if (dep->stream_capable && req->request.is_last) trb->ctrl |= DWC3_TRB_CTRL_LST;`
+- `f_tcm.c`：`stream->req_in->is_last = 1;` / `stream->req_status->is_last = 1;` /
+  `usbg_prepare_write` 的 `req->is_last = 1;`
+- `dwc3_stop_active_transfer(dep, force, interrupt)` 三参数化（`interrupt` 控制
+  `END_TRANSFER_PENDING` 的置/清）
+- `dwc3_gadget_endpoint_stream_event()`（处理 `DEPEVT_STREAMEVT_FOUND` /
+  `DEPEVT_STREAM_PRIME` / `DEPEVT_STREAM_NOSTREAM`）
+- `dep->endpoint.max_streams = 16`
+- stream 端点的 `params.param1 |= STREAM_CAPABLE | XFER_COMPLETE_EN | STREAM_EVENT_EN;`
+  （`XFER_COMPLETE_EN` 是本树原先漏掉的）
+
+> 实测（`#32`/`#34` 探针）：`ep1in/ep1out/ep2in maxstreams=16`，
+> `ep2out maxstreams=0`（cmd 端点无 stream，正确），
+> `param1 = 07002300 / 05002300 / 0b002300 / 08000200`，
+> `kick ep1in stream_capable=1 stream_id=1`，TRB `ctrl = 00004813`
+> （HWO+LST+CSP 已清+IOC+`SID_SOFN(1)`）。
+
+---
+
+## 5.5 ⚠️ 未解决：DWC_usb31 的 stream 竞态，UASP 数据通路仍不通
+
+**结论（2026-11-21 实测）**：设备侧已把 v5.10 的 stream 支持全部对齐，
+但 **PC 端依然 20 秒不完成数据 IN**，UASP 数据通路未打通。
+
+**证据链**：
+
+1. 描述符零缺陷（主机侧 `/sys/bus/usb/devices/6-4/descriptors` 原始字节核对）：
+   alt1 UAS `Prot=0x62`，4 个端点 `0x81 IN bmAttributes=4 PIPE_USAGE=3` /
+   `0x01 OUT bmAttributes=4 PIPE_USAGE=4` / `0x82 IN bmAttributes=4 PIPE_USAGE=2` /
+   `0x02 OUT bmAttributes=0 PIPE_USAGE=1`。
+2. 主机 `uas` 驱动确认绑定（`6-4:1.0` → `drivers/uas`，`bInterfaceProtocol=62`）。
+3. target 侧命令全部成功：`INQUIRY … status GOOD data_length 36`、
+   `TEST_UNIT_READY … GOOD`。
+4. 数据 IN 的 TRB 已带 `LST` + `SID_SOFN(1)`，`stream_capable=1`。
+5. **主机侧事件**：`DWC3_DEPEVT_STREAMEVT` 到达 `ep3`(ep1in) / `ep5`(ep2in)，
+   `params=0` = `DEPEVT_STREAM_NOSTREAM`。
+6. `dwc3_endpoint_interrupt()` 的 guard
+   `if (!(dep->flags & DWC3_EP_ENABLED) && !(dep->flags & DWC3_EP_END_TRANSFER_PENDING)) return;`
+   在 switch 之前 → **`dwc3_gadget_endpoint_stream_event()` 根本收不到事件**（实测 0 条）。
+7. `dwc3_gadget_start_config()`（`gadget.c:526`）开头 `if (dep->number) return 0;`
+   → 非 0 号端点拿不到 transfer resource，所以上游「启用时先发 no-op TRB」的做法
+   在本树会报 `there is no transfer resource available on the endpoint.`（`#26/#27/#41` 实测）。
+8. 芯片版本：`rev=0xb136302a`，`dwc3_is_usb31()=1`，即 **DWC_usb31**，
+   不在 v5.10 的 `DWC3_VER_IS_WITHIN(DWC32, 100A, ANY)` 范围 →
+   上游用 `DWC3_DGCMD_SET_ENDPOINT_PRIME` 的那条分支不适用。
+
+**性能实测**：
+
+| 路径 | 读速 | 卡点 |
+|---|---|---|
+| 手机后端（文件 `dd`） | **1.0 GB/s**（536870912 B / 0.532 s） | 不是瓶颈 |
+| BOT（mass_storage，现状） | **264 MB/s**（KDiskMark SEQ1M Q8T1：读 263.88 / 写 193.41） | 主机 `queue_depth=1` |
+| UASP | 未通 | 上述 DWC_usb31 stream 竞态 |
+
+**BOT 为什么也提不动**：PC 侧 `/sys/block/sdX/device/queue_depth` 是
+**`-r--r--r--`（0444 只读）**，root 也报 EACCES；`nr_requests` 改到 128 后实测无提升。
+`max_sectors_kb=1024` + `queue_depth=1` ⇒ 吞吐 = 1 MB / 往返延迟(≈3.8 ms) ≈ 264 MB/s，
+与实测完全吻合。该值由 `usb-storage` 在 probe 时写死，用户态不可调。
+
+---
+
+## 8. 结论与建议
+
+- **UASP 在手机侧已经做对**：configfs 配置、FILEIO 后端、target fabric、
+  `get_alt`、`config_ep_by_speed_and_alt`、START_TRANSFER stream 参数、
+  TRB 的 LST/CSP/`is_last`、STREAM_CAPABLE/`XFER_COMPLETE_EN`/`STREAM_EVENT_EN`、
+  `max_streams=16` —— 全部验证通过。
+- **剩余障碍是芯片级**：DWC_usb31（`rev=0xb136302a`）的 stream 事件到达时机
+  早于端点进入 ENABLED 稳态，被 `dwc3_endpoint_interrupt()` 的 guard 丢弃；
+  上游针对 DWC32 的 `SET_ENDPOINT_PRIME` 分支不适用。
+- **想继续推进的话**，下一步应验证：把 `dwc3_gadget_endpoint_stream_event()`
+  的调用**移到 guard 之前**（或放宽 guard），并在 `DEPEVT_STREAM_NOSTREAM`
+  时按 DWC32 之外的分支处理（置 `DWC3_EP_DELAY_START` + `dwc3_stop_active_transfer(dep,true,true)`）。
+  这需要再改一版内核并真机验证。
+- **BOT 提速不可行**（见 §5.5），除非改 PC 内核的 `usb-storage` `can_queue`。
