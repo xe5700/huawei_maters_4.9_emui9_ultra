@@ -10,10 +10,12 @@
 
 - **已回移并提交 131 个 CVE 修复**，其中 **2 个（CVE-2021-47121 / CVE-2021-47122）经审阅后已回退**（上游补丁不自洽），**当前净生效 129 个**；补丁原文全部保存在 `cve-patches/`。
 - 分支共 **142 个提交** = 131 个 CVE 修复提交 + 1 个 `.gitignore` 加固 + 2 个构建问题修复（§9.1）+ 2 个审阅问题修复（§11.4）+ 1 个回退提交 + 4 个文档提交 + 1 个归档提交。
+- **2026-11-21 高危补齐批次（工作树改动，构建 #47，详见 §4.2）**：按指定清单回移 **5 项**（CVE-2022-1012 / CVE-2019-9506 / CVE-2019-11487 / CVE-2022-2964 / CVE-2018-20856，共 17 个上游 stable 提交等价修复），另 2 项经实证因 `CONFIG_VHOST_NET`、`CONFIG_BLK_DEV_IO_TRACE` 未启用而不可达、不做改动；#47 已在 H4P0218923000886 验证启动。补丁归档 `cve-patches/CVE-batch-2026-11-21-v47.patch`。
 - **内核版本号保持 4.9.148 不变**：未改动 `Makefile` 的 VERSION/PATCHLEVEL/SUBLEVEL/EXTRAVERSION（已逐提交校验）。
 - **每个 CVE 一个独立 git 提交**，提交信息含 CVE 编号、stable 提交哈希、upstream 提交哈希。
 - **CVE-2026-31431 (Copy Fail) 经实证判定对本机不适用**，无需修复（见 §5）。
 - **CVE-2026-43503 (DirtyClone/Fragnesia, CVSS 8.8) 已手工适配回移**（4.9 的标记名与主线不同，见 §4）。
+- **CVE-2026-98432（IPv4 TCP UAF，CVSS 9.8）于 2026-11-21 追加回移**：两处 `kfree()` → `kfree_rcu()`，并**必须**补本树缺失的 NULL 保护（否则 `inet_opt`/`ireq_opt` 为 NULL 时写地址 0，`panic_on_oops=1` 直接起不来，构建 #45 已实测复现）；#46 已在 H4P0218923000886 验证启动。本树已实证具备 `079096f103fa` 前提，详见 §4.1。
 - **`./build.sh 12` 构建成功（exit 0）**；过程中发现并修复 2 个「补丁依赖 4.9.148 不存在的 API」问题（见 §9.1）。
 - 另有约 30 个高危 CVE 因华为重度改写相关文件而**未能自动应用，已跳过（未作任何修改）**，清单见 §7。
 
@@ -188,6 +190,7 @@
 | 129 | CVE-2022-45934 | 7.8 | 4.9.337 | `49d5867819ab` | Bluetooth: L2CAP: Fix u8 overflow | `net/bluetooth/l2cap_core.c` |
 | 130 | CVE-2023-1390 | 7.5 | 4.9.253 | `310014f572a5` | tipc: fix NULL deref in tipc_link_xmit() | `net/tipc/link.c` |
 | 131 | CVE-2026-43503 | - | 上游主线 | `48f6a5356a33` | net: skbuff: 传播 shared-frag 标记修复 ESP 就地写入 (DirtyClone/Fragne | `` |
+| 132 | CVE-2026-98432 | 9.8 | 上游主线（2026-10-01 v2） | `edumazet@kernel.org` v2 | ipv4: free inet_opt and ireq_opt after an RCU grace period | `net/ipv4/af_inet.c, net/ipv4/tcp_ipv4.c` |
 
 ---
 
@@ -212,6 +215,102 @@
 | `skb_gro_receive_list()` | 4.9 无此函数 | — 跳过 |
 
 上游提交：`48f6a5356a33dd78e7144ae1faef95ffc990aae0`、`f84eca5817390257cef78013d0112481c503b4a3`
+
+---
+
+## 4.1 CVE-2026-98432 (IPv4 TCP use-after-free) —— 2026-11-21 追加回移
+
+**CVSS 3.1 = 9.8（严重，未认证远程 DoS / root RCE）**。根因：`tcp_v4_syn_recv_sock()` 把
+`ireq->ireq_opt`（`struct ip_options_rcu`）的所有权无拷贝地转移给子 socket（`newinet->inet_opt`）；
+另一 CPU 同时处理同一 request socket 的重传 SYN，经 `tcp_check_req()` → `inet_rtx_syn_ack()` →
+`tcp_v4_send_synack()` / `inet_csk_route_req()` 只以 `rcu_read_lock()` 读取该 options，
+而子 socket 已被释放且 `inet_sock_destruct()` 用**裸 `kfree()`** 回收 `inet_opt` → UAF。
+
+**本树适用性（实证，非套话）**：
+
+```
+net/ipv4/inet_connection_sock.c:650   inet_ehash_insert(req_to_sk(req), NULL)
+   ← reqsk_queue_hash_req() ← inet_csk_reqsk_queue_hash_add()
+```
+
+即 4.12 的 `079096f103fa`「syn_recv requests install into ehash table」行为已由 MPTCP/net
+backport 带入本树——request socket 在无 listener 锁的情况下进入 ehash，正是本 CVE 的前提。
+请求 socket 迁移路径（第二个 Fixes，`net.ipv4.tcp_migrate_req`）本树不存在，故仅第一条竞态成立。
+
+**4.9 适配（关键：必须补 NULL 检查，不能逐字照搬上游）**：
+
+| 文件 | 函数 | 改动 |
+|---|---|---|
+| `net/ipv4/af_inet.c` | `inet_sock_destruct()` | 新增局部 `struct ip_options_rcu *opt;`；`opt = rcu_dereference_protected(inet->inet_opt, 1);` 然后 `if (opt) kfree_rcu(opt, rcu);` |
+| `net/ipv4/tcp_ipv4.c` | `tcp_v4_reqsk_destructor()` | 同样写法，作用于 `inet_rsk(req)->ireq_opt` |
+
+**为什么必须加 NULL 判断**：主线 `kfree_rcu()` 宏自带 NULL 保护（先判 `if (__ptr)` 再取
+rcu_head 地址），而本树 4.9 的宏（`include/linux/rcupdate.h:1114`）没有：
+
+```
+#define kfree_rcu(ptr, rcu_head) \
+    __kfree_rcu(&((ptr)->rcu_head), offsetof(typeof(*(ptr)), rcu_head))
+```
+
+`inet_opt` / `ireq_opt` 对绝大多数 socket 就是 **NULL**（`tcp_ipv4.c` 多条路径显式
+`newinet->inet_opt = NULL`）。传 NULL 时展开为 `head == NULL`，
+`__call_rcu()`（`kernel/rcu/tree.c:3133`）执行 `head->func = func;` 即写地址 0 → data abort；
+本机 `panic_on_oops=1`，于是立即 panic → 反复重启进华为 eRecovery。
+
+**已实测复现**：构建 **#45** 逐字照搬上游那一行，H4P0218923000886 刷入后无法启动并进入 eRecovery；
+刷回 #44 后一切正常。树内其它 `ip_options_rcu` 使用者本来就都带判断
+（`net/ipv4/ip_sockglue.c:673-674 if (old)`、`net/ipv4/cipso_ipv4.c:1872-1873` 与 `:1939-1940 if (opt)`），
+所以树内 283 处 `kfree_rcu()` 调用不受影响——问题只出在这两个新落点。
+
+`net/dccp/ipv4.c:554` 有同款裸 kfree，但 `CONFIG_DCCP` 未启用，不参与编译，未改。
+改动为指令级 + 一个局部变量，无结构体布局/符号变化，ABI 不变（`tools/abi-verify.sh` 通过）。
+
+补丁归档：`cve-patches/CVE-2026-98432.patch`。
+验证设备：H4P0218923000886 —— **#46 已刷入并正常启动**（`uname -v` =
+`#46 SMP PREEMPT Sat Nov 21 20:01:35 CST 2026`，分区回读 sha256
+`c20a94f5fdf6e5ccaf792b7d61e6aeb14eeca20181f5c325321eb08fffe6c452`，
+`CONFIG_POSIX_MQUEUE/CGROUP_DEVICE/BPF_JIT` 仍为 y，`sys.boot_completed=1`，
+内核日志无 oops/panic）。
+
+---
+
+## 4.2 高危补齐批次（2026-11-21，工作树未提交改动，构建 #47）
+
+按用户指定清单补齐 7 项；其中 **5 项已回移并验证**，**2 项经实证在本机不可达、不做改动**。
+全部取自 `linux-4.9.y` 稳定分支的上游 backport，除标注「手工适配」者外均按原文应用。
+另：**刻意跳过** `39e2c51405fb`（`tcp: configurable source port perturb table size`，
+2022-12-08，引入 `CONFIG_INET_TABLE_PERTURB_ORDER`）——属额外加固而非 CVE 修复本身，避免扩大改动面。
+
+| CVE | CVSS | 组件 / 落点 | 采用的上游 stable 提交 |
+|---|---|---|---|
+| CVE-2022-1012 | 8.2 | TCP 源端口随机性不足 | `136b4799419a`、`05a12e5c4063`、`576696ed0dee`、`2ed413f140bb`、`aa7722529f6d`、`dd82067bd6ca`(手工)、`3c78eea640f6`(手工)、`a81a6b204a30`(手工) |
+| CVE-2019-9506 | 8.1 | Bluetooth KNOB（BR/EDR 最小密钥长度） | `6290d9d3192e`、`68d1e285e934`、`f470557724f2` |
+| CVE-2019-11487 | 7.8 | page refcount 溢出（pipe/splice/fuse/gup/hugetlb） | `604d7b594c6d`、`96019c691458`、`9557090582a3`(fuse 部分手工)、`2ed768cfd895`(gup 部分手工) |
+| CVE-2022-2964 | 7.8 | ASIX AX88179_178A RX fixup OOB 读写 | `711b6bf3fb05`（函数整体按上游 post-image 重写） |
+| CVE-2018-20856 | 7.8 | `block/blk-core.c` `__blk_drain_queue()` UAF | `54648cf1ec2d`（一行：`blk_free_flush_queue(q->fq)` 后补 `q->fq = NULL`） |
+
+**判定为不可达（未修改，无需修复）**：
+
+- **CVE-2019-3900**（vhost_net `handle_rx()` 死循环 DoS）：`CONFIG_VHOST_NET` 为 `not set`，
+  `drivers/vhost/net.c` 不参与编译，代码路径不存在。
+- **CVE-2019-19768**（`kernel/trace/blktrace.c` `__blk_add_trace()` UAF(read)）：
+  `CONFIG_BLK_DEV_IO_TRACE` 为 `not set`，`blktrace` 不编译，路径不存在。
+
+**构建与真机验证**：
+
+- `./rebuild.sh 16` exit 0；`out/.version` = **47**，`UTS_VERSION "#47 SMP PREEMPT Sat Nov 21 21:15:55 CST 2026"`；
+- `bash tools/abi-verify.sh` → `ABI CHECK PASSED`；`Image.gz` 15168027 B；
+- 打包 `SELINUX_MODE=enforcing ./pack.sh ... kernel-cve-batch-v47.img`，15171584 B，
+  sha256 `0df0e9b51f81311964633f6dfb51040d7caa14e0fbf93c4970fe61832f46275a`；
+- H4P0218923000886：push 后设备侧 sha 一致 → `dd` 写入 `/dev/block/by-name/kernel` →
+  分区回读 sha 一致 → `adb reboot` 约 30s 起来，`uname -v` = `#47`，
+  `sys.boot_completed=1`，`CONFIG_POSIX_MQUEUE/CGROUP_DEVICE/BPF_JIT` 仍 y、
+  `CONFIG_BLK_DEV_INTEGRITY` 仍 not set；dmesg 中仅有华为 `aware_net_exit`/`remove_proc_entry`
+  的既存 WARN（netns 清理），无 oops/panic。
+
+**注意**：`table_perturb` 改为动态分配（2^16 × u32 = 256kB），在 `inet_hashinfo_init()`
+中为 `tcp_hashinfo` 申请，失败即 `panic("TCP: failed to alloc table_perturb")`（上游行为）；
+本机启动正常说明分配成功。
 
 ---
 
@@ -253,22 +352,22 @@ crypto/Makefile:134:  obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 
 | CVE | CVSS | 修复内容在树中缺失率 |
 |---|---|---|
-| CVE-2022-1012 | 8.2 | 缺失 100% |
+| CVE-2022-1012 | 8.2 | ~~缺失 100%~~ → **已回移（§4.2，构建 #47）** |
 | CVE-2020-28374 | 8.1 | 缺失 94% |
-| CVE-2019-9506 | 8.1 | 缺失 100% |
+| CVE-2019-9506 | 8.1 | ~~缺失 100%~~ → **已回移（§4.2，构建 #47）** |
 | CVE-2022-26490 | 7.8 | 缺失 67% |
 | CVE-2021-26930 | 7.8 | 缺失 75% |
-| CVE-2019-11487 | 7.8 | 缺失 80% |
+| CVE-2019-11487 | 7.8 | ~~缺失 80%~~ → **已回移（§4.2，构建 #47）** |
 | CVE-2020-27786 | 7.8 | 缺失 82% |
 | CVE-2020-14356 | 7.8 | 缺失 82% |
-| CVE-2022-2964 | 7.8 | 缺失 85% |
+| CVE-2022-2964 | 7.8 | ~~缺失 85%~~ → **已回移（§4.2，构建 #47）** |
 | CVE-2022-20368 | 7.8 | 缺失 88% |
-| CVE-2018-20856 | 7.8 | 缺失 100% |
+| CVE-2018-20856 | 7.8 | ~~缺失 100%~~ → **已回移（§4.2，构建 #47）** |
 | CVE-2019-2182 | 7.8 | 缺失 100% |
 | CVE-2020-35519 | 7.8 | 缺失 100% |
 | CVE-2022-4095 | 7.8 | 缺失 100% |
-| CVE-2019-3900 | 7.7 | 缺失 86% |
-| CVE-2019-19768 | 7.5 | 缺失 82% |
+| CVE-2019-3900 | 7.7 | 不可达：`CONFIG_VHOST_NET` not set（§4.2），不修改 |
+| CVE-2019-19768 | 7.5 | 不可达：`CONFIG_BLK_DEV_IO_TRACE` not set（§4.2），不修改 |
 | CVE-2021-45485 | 7.5 | 缺失 100% |
 | CVE-2020-25705 | 7.4 | 缺失 100% |
 | CVE-2022-33742 | 7.1 | 缺失 96% |
