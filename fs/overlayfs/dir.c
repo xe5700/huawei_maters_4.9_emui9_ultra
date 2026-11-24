@@ -483,13 +483,29 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 {
 	int err;
 	const struct cred *old_cred;
+	const struct cred *saved_cred;
 	struct cred *override_cred;
+	bool overridden;
 
 	err = ovl_copy_up(dentry->d_parent);
 	if (err)
 		return err;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
+	/*
+	 * HUAWEI FIX: ovl_parse_opt() sets caller_credentials = true by
+	 * default, so ovl_override_creds() above returns NULL and no
+	 * override is applied.  The explicit override_creds() below is then
+	 * never undone (ovl_revert_creds(NULL) is a no-op) and the previous
+	 * cred is put once too many, so current->cred stays pointing at
+	 * override_cred after this function returns.  A later
+	 * prctl(PR_CAPBSET_DROP) -> commit_creds() then hits
+	 * BUG_ON(task->cred != old) in kernel/cred.c and panics the
+	 * kernel.  Remember the credential we are replacing and revert it
+	 * explicitly.
+	 */
+	saved_cred = old_cred ? old_cred : current_cred();
+	overridden = false;
 	err = -ENOMEM;
 	override_cred = prepare_creds();
 	if (override_cred) {
@@ -502,11 +518,12 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 			err = 0;
 			if (err) {
 				put_cred(override_cred);
+				override_cred = NULL;
 				goto out_revert_creds;
 			}
 		}
-		put_cred(override_creds(override_cred));
-		put_cred(override_cred);
+		override_creds(override_cred);
+		overridden = true;
 
 		if (!ovl_dentry_is_opaque(dentry))
 			err = ovl_create_upper(dentry, inode, stat, link,
@@ -516,7 +533,10 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 							link, hardlink);
 	}
 out_revert_creds:
-	ovl_revert_creds(old_cred);
+	if (overridden)
+		ovl_revert_creds(saved_cred);
+	if (override_cred)
+		put_cred(override_cred);
 	if (!err) {
 		struct inode *realinode = d_inode(ovl_dentry_upper(dentry));
 
